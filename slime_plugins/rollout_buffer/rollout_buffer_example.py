@@ -186,6 +186,10 @@ def start_rollout(api_base_url: str, args, metadata):
         },
         "tokenizer_path": args.hf_checkpoint,
         "skip_instance_ids": finished_groups_instance_id_list,
+        "extractor_url": getattr(args, "answer_extractor_url", "http://127.0.0.1:8000"),
+        "checker_url": getattr(args, "answer_checker_url", "http://127.0.1:8001"),
+        "search_browser_type": getattr(args, "search_browser_type", "glm"),
+        "search_summary_url": getattr(args, "search_summary_url", ""),
     }
     print("start rollout with payload: ", payload)
 

@@ -46,6 +46,8 @@ class MultiTurnLossMaskGenerator:
         all_loss_masks = []
         all_token_ids = []
 
+        is_glm = "<|observation|>" in self.tokenizer.__str__()
+
         for i, message in enumerate(messages):
             message_ids = self.tokenizer.apply_chat_template([message], tokenize=True)
 
@@ -55,13 +57,25 @@ class MultiTurnLossMaskGenerator:
             if message["role"] == "assistant":
                 loss_mask = [0] * self.gen_token_length + [1] * (len(message_ids) - self.gen_token_length)
             else:
-                loss_mask = [0] * len(message_ids)
+                # loss_mask = [0] * len(message_ids)
+                # loss_mask = [0] * len(message_ids)
+                if i > 0 and message["role"] == "tool" and is_glm:
+                    assert message_ids[0] == self.tokenizer.encode("<|observation|>")[0], f"Tool message must start with <|observation|>, found {message['content']}"
+                    loss_mask = [1] + [0] * (len(message_ids) - 1)
+                else:
+                    assert message["role"] in ("user", "system")
+                    loss_mask = [0] * len(message_ids)
+
 
             if message.get("step_loss_mask", 1) != 1:
                 loss_mask = [0] * len(message_ids)
 
             all_loss_masks.extend(loss_mask)
             all_token_ids.extend(message_ids)
+
+            if is_glm and i == len(messages) - 1:
+                all_token_ids.append(self.tokenizer.encode("<|user|>")[0])
+                all_loss_masks.append(1)
 
         return all_token_ids, all_loss_masks
 
