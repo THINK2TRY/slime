@@ -194,6 +194,7 @@ def start_rollout(api_base_url: str, args, metadata):
         "checker_url": getattr(args, "answer_checker_url", "http://127.0.1:8001"),
         "search_browser_type": getattr(args, "search_browser_type", "glm"),
         "search_summary_url": getattr(args, "search_summary_url", ""),
+        "mask_offpolicy_data": getattr(args, "mask_extreme_offpolicy_data", False)
     }
     print("start rollout with payload: ", payload)
 
@@ -270,6 +271,13 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
     print("finally get rollout data with length: ", len(results))
     sample_results = []
 
+    log_items = {
+        "overlong": [],
+        "turns": [],
+        "overturn": [],
+        "abort_times": [], 
+    }
+    
     for i, group_record in enumerate(results):
         group_results = []
         for record in group_record:
@@ -298,11 +306,36 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
                     metadata={**record["extra_info"]},
                 )
             )
+            log_items["turns"].append(len(oai_messages) // 2)
+            log_items["overturn"].append(record.get("overturn", False))
+            log_items["overlong"].append(record.get("overlong", False))
+            log_items["abort_times"].append(record.get("abort_times", 0))
+            
         sample_results.append(group_results)
+
+    if args.use_wandb and log_items["overlong"]:
+        import wandb
+        num_items = len(log_items["overturn"])
+        log_dict = {
+            "rollout/overlong": sum(log_items["overlong"]) / num_items,
+            "rollout/max_turns": max(log_items["turns"]),
+            "rollout/min_turns": min(log_items["turns"]),
+            "rollout/avg_turns": sum(log_items["turns"]) / num_items,
+            "rollout/overturn": sum(log_items["overturn"]) / num_items,
+            "rollout/abort_ratio": sum([x > 0 for x in log_items["abort_times"]]) / num_items,
+            "rollout/abort_ratio2": sum([x > 1 for x in log_items["abort_times"]]) / num_items
+        }
+        wandb.log(log_dict)
+        
 
     data_buffer.add_samples(sample_results)
     final_return_results = data_buffer.get_samples(args.rollout_batch_size)  # type: ignore
 
+    # import json
+    # json.dump(
+    #     final_return_results[0],
+    #     open("/workspace/zhenyu/code/example.json", "w")
+    # )
     return final_return_results
 
 

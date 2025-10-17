@@ -927,6 +927,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument("--search-browser-type", type=str, default="glm")
             parser.add_argument("--search-summary-url", type=str, default="")
             parser.add_argument("--rollout-num-process", type=int, default=0)
+            parser.add_argument("--mask-extreme-offpolicy-data", action="store_true", default=False)
             # parser.add_argument('--post-self-attn-layernorm', action='store_true', help="If true, add a LayerNorm after self attention.")
             # parser.add_argument('--post-mlp-layernorm', action='store_true', help="If true, add a LayerNorm after MLP.")
             # parser.add_argument('--load-optimizer-from-pretrained', action="store_true", help="If true, load optimizer state from pretrained checkpoint.")

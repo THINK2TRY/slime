@@ -88,8 +88,8 @@ class MultiTurnLossMaskGenerator:
         all_token_ids = []
 
         prefix_message = {"role": "user", "content": "FOR CALCULATING LOSS MASK ONLY"}
-        prefix_token_ids = self.tokenizer.apply_chat_template([prefix_message], tokenize=True)
-
+        prefix_token_ids = self.tokenizer.apply_chat_template([prefix_message], tokenize=True)        
+        
         for i, message in enumerate(messages):
             prefixed_message_ids = self.tokenizer.apply_chat_template([prefix_message, message], tokenize=True)
             message_ids = prefixed_message_ids[len(prefix_token_ids) :]
