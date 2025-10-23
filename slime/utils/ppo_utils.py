@@ -45,6 +45,20 @@ def compute_approx_kl(
         raise ValueError(f"Unknown kl_loss_type: {kl_loss_type}")
 
 
+def compute_cispo_policy_loss(
+    logp: torch.Tensor,
+    advantages: torch.Tensor,
+    ppo_kl: torch.Tensor,
+    eps_clip: float,
+    eps_clip_high: float,
+):
+    ratio = (-ppo_kl).exp().detach()
+    clipped_ratio = ratio.clamp(eps_clip, eps_clip_high)
+    pg_losses = -clipped_ratio * advantages * logp
+    clipfrac = (clipped_ratio != ratio.detach()).float()
+    return pg_losses, clipfrac
+
+
 @torch.compile(dynamic=True)
 def compute_policy_loss(
     ppo_kl: torch.Tensor,
@@ -52,22 +66,30 @@ def compute_policy_loss(
     eps_clip: float,
     eps_clip_high: float,
     eps_clip_c: Optional[float] = None,
+    advantage_estimator: str = "grpo",
+    log_probs: Optional[torch.Tensor] = None,
+    
 ):
-    ratio = (-ppo_kl).exp()
-    pg_losses1 = -ratio * advantages
-    pg_losses2 = -ratio.clamp(1 - eps_clip, 1 + eps_clip_high) * advantages
-    clip_pg_losses1 = torch.maximum(pg_losses1, pg_losses2)
-    clipfrac = torch.gt(pg_losses2, pg_losses1).float()
-
-    if eps_clip_c is not None:
-        assert (
-            eps_clip_c > 1.0
-        ), f"The lower bound of the clip_ratio_c for dual-clip PPO should be greater than 1.0, but get the value: {eps_clip_c}."
-        pg_losses3 = -eps_clip_c * advantages
-        clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
-        pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
+    if advantage_estimator == "cispo":
+        return compute_cispo_policy_loss(
+            log_probs, advantages, ppo_kl, eps_clip, eps_clip_high
+        )
     else:
-        pg_losses = clip_pg_losses1
+        ratio = (-ppo_kl).exp()
+        pg_losses1 = -ratio * advantages
+        pg_losses2 = -ratio.clamp(1 - eps_clip, 1 + eps_clip_high) * advantages
+        clip_pg_losses1 = torch.maximum(pg_losses1, pg_losses2)
+        clipfrac = torch.gt(pg_losses2, pg_losses1).float()
+
+        if eps_clip_c is not None:
+            assert (
+                eps_clip_c > 1.0
+            ), f"The lower bound of the clip_ratio_c for dual-clip PPO should be greater than 1.0, but get the value: {eps_clip_c}."
+            pg_losses3 = -eps_clip_c * advantages
+            clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
+            pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
+        else:
+            pg_losses = clip_pg_losses1
 
     return pg_losses, clipfrac
 

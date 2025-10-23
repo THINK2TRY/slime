@@ -631,7 +631,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--advantage-estimator",
                 type=str,
-                choices=["grpo", "gspo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "ppo"],
+                choices=["grpo", "gspo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "ppo", "cispo", "vapo"],
                 default="grpo",
             )
             parser.add_argument(
@@ -1184,7 +1184,8 @@ def slime_validate_args(args):
         )
         args.debug_train_only = True
 
-    args.use_critic = args.advantage_estimator == "ppo"
+    args.use_critic = args.advantage_estimator in ("ppo", "vapo")
+        
     if args.critic_num_gpus_per_node is None:
         args.critic_num_gpus_per_node = args.actor_num_gpus_per_node
     if args.critic_num_nodes is None:

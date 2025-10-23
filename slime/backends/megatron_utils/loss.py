@@ -12,7 +12,6 @@ from slime.utils.ppo_utils import (
     compute_approx_kl,
     compute_policy_loss,
     get_advantages_and_returns,
-    get_advantages_and_returns_vapo,
     get_grpo_returns,
     get_reinforce_plus_plus_baseline_advantages,
     get_reinforce_plus_plus_returns,
@@ -237,7 +236,7 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, 
             for i in range(len(log_probs))
         ]
 
-    if args.advantage_estimator in ["grpo", "gspo"]:
+    if args.advantage_estimator in ["grpo", "gspo", "cispo"]:
         rewards = torch.tensor(rewards, dtype=torch.float32, device=kl[0].device)
         returns = get_grpo_returns(rewards, kl)
         # TODO: is the copy necessary?
@@ -278,7 +277,7 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, 
             advantages, returns = list(
                 zip(
                     *[
-                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, lambd=args.lambd if not args.use_length_adaptive_gae else 1 - 1 / (response_len * args.length_adaptive_alpha))
+                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, lambd=args.lambd if not args.use_length_adaptive_gae else 1 - 1 / (response_length * args.length_adaptive_alpha))
                         for total_length, response_length, value, reward in zip(
                             total_lengths, response_lengths, values, rewards
                         )
@@ -289,7 +288,7 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, 
             advantages, returns = list(
                 zip(
                     *[
-                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, args.lambd, lambd=args.lambd_critic)
+                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, lambd=args.lambd_critic)
                         for total_length, response_length, value, reward in zip(
                             total_lengths, response_lengths, values, rewards
                         )
@@ -378,8 +377,8 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, 
             chunk_lengths = [chunk.size(0) for chunk in advantages]
             advantages = list(torch.split(whitened_advs_flat, chunk_lengths))
 
-    rollout_data["advantages"] = advantages[0]
-    rollout_data["returns"] = returns[0]
+    rollout_data["advantages"] = advantages
+    rollout_data["returns"] = returns
 
 
 def policy_loss_function(
@@ -452,7 +451,7 @@ def policy_loss_function(
         log_probs = torch.cat(log_probs, dim=0)
         ppo_kl = old_log_probs - log_probs
 
-    pg_loss, pg_clipfrac = compute_policy_loss(ppo_kl, advantages, args.eps_clip, args.eps_clip_high)
+    pg_loss, pg_clipfrac = compute_policy_loss(ppo_kl, advantages, args.eps_clip, args.eps_clip_high, advantage_estimator=args.advantage_estimator, log_probs=log_probs)
 
     # Apply off-policy correction using importance sampling if enabled
     if args.use_tis:

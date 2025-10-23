@@ -265,7 +265,7 @@ def forward_only(
             unconcat_tokens=unconcat_tokens,
             total_lengths=total_lengths,
             response_lengths=response_lengths,
-            with_entropy=args.use_rollout_entropy,
+            # with_entropy=args.use_rollout_entropy,
         )
 
     # Turn on evaluation mode which disables dropout.
