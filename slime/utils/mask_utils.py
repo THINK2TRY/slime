@@ -67,7 +67,7 @@ class MultiTurnLossMaskGenerator:
                     assert message_ids[0] == self.tokenizer.encode("<|observation|>")[0], f"Tool message must start with <|observation|>, found {message['content']}"
                     loss_mask = [1] + [0] * (len(message_ids) - 1)
                 else:
-                    assert message["role"] in ("user", "system")
+                    assert message["role"] in ("user", "system", "tool")
                     loss_mask = [0] * len(message_ids)
 
 
@@ -89,7 +89,7 @@ class MultiTurnLossMaskGenerator:
 
         prefix_message = {"role": "user", "content": "FOR CALCULATING LOSS MASK ONLY"}
         prefix_token_ids = self.tokenizer.apply_chat_template([prefix_message], tokenize=True)        
-        
+
         for i, message in enumerate(messages):
             prefixed_message_ids = self.tokenizer.apply_chat_template([prefix_message, message], tokenize=True)
             message_ids = prefixed_message_ids[len(prefix_token_ids) :]
@@ -128,7 +128,6 @@ class MultiTurnLossMaskGenerator:
         if self.tokenizer_type == "qwen":
             if "<｜Assistant｜>" in self.tokenizer.get_added_vocab():
                 return self.gen_multi_turn_loss_mask_distill_qwen(messages)
-
             return self.gen_multi_turn_loss_mask_qwen(messages)
         elif self.tokenizer_type == "qwen3":
             return self.gen_multi_turn_loss_mask_qwen3(messages)
