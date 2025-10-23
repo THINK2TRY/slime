@@ -12,6 +12,7 @@ from slime.utils.ppo_utils import (
     compute_approx_kl,
     compute_policy_loss,
     get_advantages_and_returns,
+    get_advantages_and_returns_vapo,
     get_grpo_returns,
     get_reinforce_plus_plus_baseline_advantages,
     get_reinforce_plus_plus_returns,
@@ -189,7 +190,7 @@ def get_values(
     }
 
 
-def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) -> None:
+def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, is_policy=True) -> None:
     """Compute advantages and returns in-place based on `args.advantage_estimator`.
 
     This function extracts rewards, log-probs, values, and masks from
@@ -263,6 +264,39 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) 
             )
         )
 
+    elif args.advantage_estimator == "vapo":
+        old_rewards = rewards
+        rewards = []
+        for reward, k in zip(old_rewards, kl):
+            k *= -args.kl_coef
+            cp_rank = mpu.get_context_parallel_rank()
+            if cp_rank == 0:
+                k[-1] += reward
+            rewards.append(k)
+
+        if is_policy:
+            advantages, returns = list(
+                zip(
+                    *[
+                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, lambd=args.lambd if not args.use_length_adaptive_gae else 1 - 1 / (response_len * args.length_adaptive_alpha))
+                        for total_length, response_length, value, reward in zip(
+                            total_lengths, response_lengths, values, rewards
+                        )
+                    ]
+                )
+            )
+        else:
+            advantages, returns = list(
+                zip(
+                    *[
+                        get_advantages_and_returns(total_length, response_length, value, reward, args.gamma, args.lambd, lambd=args.lambd_critic)
+                        for total_length, response_length, value, reward in zip(
+                            total_lengths, response_lengths, values, rewards
+                        )
+                    ]
+                )
+            )
+
     elif args.advantage_estimator == "reinforce_plus_plus":
         rewards = torch.tensor(rewards, dtype=torch.float32, device=kl[0].device)
         returns = get_reinforce_plus_plus_returns(
@@ -289,8 +323,10 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) 
     else:
         raise NotImplementedError(f"advantage_estimator {args.advantage_estimator} is not supported. ")
 
+    if args.normalize_advantages and args.advantage_estimator == "vapo":
+        print(f"VAPO does not support `normalize_advantages`. skip this action.")
     # TODO: OpenRLHF always does advantages normalization but veRL doesn't seem to do it.
-    if args.normalize_advantages:
+    if args.normalize_advantages and args.advantage_estimator != "vapo":
         all_advs = torch.cat(advantages)
         cp_size = mpu.get_context_parallel_world_size()
         if cp_size == 1:
@@ -342,8 +378,8 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) 
             chunk_lengths = [chunk.size(0) for chunk in advantages]
             advantages = list(torch.split(whitened_advs_flat, chunk_lengths))
 
-    rollout_data["advantages"] = advantages
-    rollout_data["returns"] = returns
+    rollout_data["advantages"] = advantages[0]
+    rollout_data["returns"] = returns[0]
 
 
 def policy_loss_function(

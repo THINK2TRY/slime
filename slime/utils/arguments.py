@@ -40,6 +40,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--critic-num-gpus-per-node", type=int, default=None, help="Number of gpus per node for training actor"
             )
+            parser.add_argument(
+                "--lambd-critic", type=float, default=1.0, help="VAPO GAE critic lambd"
+            )
+            parser.add_argument(
+                "--use-length-adaptive-gae", action="store_true", default=False, help="use length adaptive GAE for VAPO"
+            )
+            parser.add_argument(
+                "--length-adaptive-alpha", type=float, default=0.05, help="length parameter for length adaptive gae"
+            )
 
             parser.add_argument(
                 "--rollout-num-gpus",
