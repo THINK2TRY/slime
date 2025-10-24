@@ -230,7 +230,7 @@ class FSDPTrainRayActor(TrainRayActor):
                             model_args["pixel_values"] = batch["pixel_values"]
                         logits = self.model(**model_args).logits
                     batch[f"{store_prefix}log_probs"] = gather_log_probs_packed(
-                        logits, batch["tokens"], self.args.rollout_temperature
+                        logits, batch["tokens"], temperature=self.args.rollout_temperature
                     )
             return rollout_data
 
@@ -386,7 +386,9 @@ class FSDPTrainRayActor(TrainRayActor):
                 ).logits
 
             # Handle packed sequences
-            log_probs = gather_log_probs_packed(logits, packed_batch["tokens"], packed_batch["cu_seqlens"])
+            log_probs = gather_log_probs_packed(
+                logits, packed_batch["tokens"], packed_batch["cu_seqlens"], temperature=self.args.rollout_temperature
+            )
             packed_batch["cur_log_probs"] = log_probs
             unpacked_batches = unpack_sequences(packed_batch)
 
@@ -632,30 +634,11 @@ class FSDPTrainRayActor(TrainRayActor):
             self.update_gpu_params_dict(current_weights)
 
 
-def gather_log_probs(logits: torch.Tensor, input_ids: torch.Tensor, rollout_temperature: float = 1.0) -> torch.Tensor:
-    """Gather next-token log probabilities for standard (unpadded) batches.
-
-    Parameters:
-        logits: Logits of shape [B, T, V].
-        input_ids: Token ids of shape [B, T].
-        rollout_temperature: Optional temperature for logits scaling.
-
-    Returns:
-        Log-probabilities of targets with shape [B, T-1].
-    """
-    # log_probs: [B, T-1, V]; input_ids: [B, T]
-    pred_logits = logits[:, :-1]
-    # haoran: whether to apply temperature shifting here?
-    if rollout_temperature != 1.0:
-        pred_logits = pred_logits / rollout_temperature
-    log_probs_all = torch.log_softmax(pred_logits, dim=-1)
-    tgt = input_ids[:, 1:].contiguous()
-    log_probs = log_probs_all.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
-    return log_probs
-
-
 def gather_log_probs_packed(
-    logits: torch.Tensor, input_ids: torch.Tensor, cu_seqlens: torch.Tensor | float | None = None
+    logits: torch.Tensor,
+    input_ids: torch.Tensor,
+    cu_seqlens: torch.Tensor | float | None = None,
+    temperature: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Gather next-token log probabilities for packed sequences.
 
@@ -673,6 +656,9 @@ def gather_log_probs_packed(
         # Remove batch dimension for packed sequences
         logits = logits.squeeze(0)
         input_ids = input_ids.squeeze(0)
+
+    if temperature is not None:
+        logits = logits.div(temperature)
 
     # Shift for next-token prediction: logits[:-1] predicts input_ids[1:]
     log_probs = torch.log_softmax(logits[:-1], dim=-1)

@@ -34,6 +34,10 @@ def train(args):
             ray.get(rollout_manager.onload.remote(tags=[GPU_MEMORY_TYPE_CUDA_GRAPH]))
         ray.get(rollout_manager.onload.remote(tags=[GPU_MEMORY_TYPE_KV_CACHE]))
 
+    # special case for eval-only
+    if args.num_rollout == 0 and args.eval_interval is not None:
+        ray.get(rollout_manager.eval.remote(rollout_id=0))
+
     # train loop.
     # note that for async training, one can change the position of the sync operation(ray.get).
     for rollout_id in range(args.start_rollout_id, args.num_rollout):
@@ -58,12 +62,12 @@ def train(args):
             (rollout_id + 1) % args.save_interval == 0
             or (num_rollout_per_epoch is not None and (rollout_id + 1) % num_rollout_per_epoch == 0)
         ):
+            if (not args.use_critic) or (rollout_id >= args.num_critic_only_steps):
+                actor_model.save_model(rollout_id)
             if args.use_critic:
                 critic_model.save_model(rollout_id)
-                if rollout_id >= args.num_critic_only_steps:
-                    actor_model.save_model(rollout_id)
-                else:
-                    actor_model.save_model(rollout_id)
+            if args.rollout_global_dataset:
+                ray.get(rollout_manager.save.remote(rollout_id))
 
         if args.offload:
             if args.use_critic:
