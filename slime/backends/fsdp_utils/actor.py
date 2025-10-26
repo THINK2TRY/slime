@@ -1,3 +1,4 @@
+import time
 from argparse import Namespace
 from collections.abc import Iterable
 from contextlib import nullcontext
@@ -10,6 +11,7 @@ from packaging import version
 from torch.distributed.tensor import DTensor
 from torch_memory_saver import torch_memory_saver
 from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+from slime.utils.memory_utils import clear_memory, print_memory
 
 # Import FSDP v2 components based on PyTorch version
 if version.parse(torch.__version__) >= version.parse("2.6"):
@@ -22,6 +24,7 @@ else:
 import wandb
 
 from slime.ray.train_actor import TrainRayActor
+from slime.utils import profile_utils
 from slime.utils.data import get_minimum_num_micro_batch_size, process_rollout_data
 from slime.utils.distributed_utils import get_gloo_group
 from slime.utils.ppo_utils import compute_approx_kl, compute_policy_loss
@@ -50,6 +53,16 @@ class FSDPTrainRayActor(TrainRayActor):
     def init(self, args: Namespace, role: str, wandb_run_id: str, with_ref: bool = False) -> int:  # type: ignore[override]
         super().init(args, role, wandb_run_id, with_ref)
 
+        if args.true_on_policy_mode:
+            from sglang.srt.batch_invariant_ops import enable_batch_invariant_mode
+
+            print("FSDPTrainRayActor call enable_batch_invariant_mode for true-on-policy")
+            enable_batch_invariant_mode(
+                # In Qwen3, rope `inv_freq_expanded.float() @ position_ids_expanded.float()` uses bmm
+                # and disabling it will make it aligned
+                enable_bmm=False,
+            )
+
         # Update rank and world_size for wandb secondary initialization (using actual distributed values)
         args.rank = dist.get_rank()
         args.world_size = dist.get_world_size()
@@ -59,6 +72,9 @@ class FSDPTrainRayActor(TrainRayActor):
 
         self.args = args
         torch.manual_seed(args.seed)
+
+        if args.record_memory_history:
+            profile_utils.attach_oom_dump_memory_history(profile_utils.get_memory_snapshot_full_path(args))
 
         for i in range(dist.get_world_size()):
             if i == dist.get_rank():
@@ -129,7 +145,7 @@ class FSDPTrainRayActor(TrainRayActor):
         # Initialize data packing parameters
         self.max_tokens_per_gpu = args.max_tokens_per_gpu  # From main arguments
 
-        if self.args.offload:
+        if self.args.offload_train:
             self.sleep(("model"))
 
         Timer().start("train_wait")
@@ -146,14 +162,24 @@ class FSDPTrainRayActor(TrainRayActor):
         None, all registered regions are paused. See the torch_memory_saver
         tagged API for details.
         """
-        if not getattr(self.args, "offload", False):
+        if not self.args.offload_train:
             return
+
+        # Try to avoid this case:
+        # * FSDP contains a lot of cached memory and sleep
+        # * SGLang resumes and allocate some memory
+        # * FSDP resumes but realize there is no enough memory, thus OOM currently, but indeed the cache can be (partially) freed to fulfill requirements
+        # TODO: improve it later
+        clear_memory()
 
         if isinstance(tags, str):
             tags = (tags,)
 
         if torch_memory_saver is not None:
             torch_memory_saver.pause()
+
+        torch.cuda.synchronize()
+        dist.barrier(group=get_gloo_group())
 
     def wake_up(self, tags: str | Iterable[str] | None) -> None:
         """Resume CUDA memory for all tracked tensors via torch_memory_saver.
@@ -164,14 +190,27 @@ class FSDPTrainRayActor(TrainRayActor):
         None, all registered regions are resumed. See the torch_memory_saver
         tagged API for details.
         """
-        if not getattr(self.args, "offload", False):
+        if not self.args.offload_train:
             return
 
         if isinstance(tags, str):
             tags = (tags,)
 
+        # TODO this is copy-pasted from megatron side; should unify the two
+        # there are weird times when sglang is not offloaded immediately, so we wait here.
+        mem_fraction_static = self.args.sglang_mem_fraction_static or 0.8
+        for _ in range(60):
+            memory_info = print_memory("before wake_up model")
+            if memory_info["used_GB"] >= mem_fraction_static * memory_info["total_GB"]:
+                time.sleep(1)
+                continue
+            break
+
         if torch_memory_saver is not None:
             torch_memory_saver.resume()
+
+        torch.cuda.synchronize()
+        dist.barrier(group=get_gloo_group())
 
     def save_model(self, iteration: int) -> None:
         """Save model state and optimizer state for the given iteration.
@@ -318,7 +357,7 @@ class FSDPTrainRayActor(TrainRayActor):
         """
         Timer().end("train_wait")
 
-        if self.args.offload:
+        if self.args.offload_train:
             self.wake_up(("model"))
 
         world_size = dist.get_world_size()
@@ -417,6 +456,9 @@ class FSDPTrainRayActor(TrainRayActor):
 
             pg_loss, pg_clipfrac = compute_policy_loss(ppo_kl, advantages, self.args.eps_clip, self.args.eps_clip_high)
 
+            rollout_log_probs = torch.cat([batch["rollout_log_probs"] for batch in unpacked_batches], dim=0)
+            rollout_log_probs = rollout_log_probs.to(device=log_probs.device)
+
             # Apply TIS before sample mean calculation
             if self.args.use_tis:
                 # Initialize TIS variables
@@ -431,9 +473,6 @@ class FSDPTrainRayActor(TrainRayActor):
                     for batch in unpacked_batches
                 ), "rollout_log_probs must be provided as non-empty torch.Tensor for TIS"
 
-                rollout_log_probs = torch.cat([batch["rollout_log_probs"] for batch in unpacked_batches], dim=0)
-                rollout_log_probs = rollout_log_probs.to(device=log_probs.device)
-
                 tis = torch.exp(old_log_probs - rollout_log_probs)
                 ois = (-ppo_kl).exp()
                 tis_clip = torch.clamp(
@@ -446,6 +485,11 @@ class FSDPTrainRayActor(TrainRayActor):
             pg_loss = sum_of_sample_mean(pg_loss, response_lengths, loss_masks)
             pg_clipfrac = sum_of_sample_mean(pg_clipfrac, response_lengths, loss_masks)
             ppo_kl = sum_of_sample_mean(ppo_kl.abs(), response_lengths, loss_masks)
+
+            train_rollout_logprob_diff = old_log_probs - rollout_log_probs
+            train_rollout_logprob_diff = sum_of_sample_mean(
+                train_rollout_logprob_diff, response_lengths, loss_masks
+            ).detach()
 
             loss = pg_loss
 
@@ -470,6 +514,7 @@ class FSDPTrainRayActor(TrainRayActor):
                 "pg_loss": pg_loss.detach(),
                 "pg_clipfrac": pg_clipfrac.detach(),
                 "ppo_kl": ppo_kl.detach(),
+                "train_rollout_logprob_diff": train_rollout_logprob_diff,
             }
 
             if self.args.use_kl_loss:
@@ -540,6 +585,9 @@ class FSDPTrainRayActor(TrainRayActor):
                 print(f"Updating ref model at rollout_id {rollout_id}")
             self.update_cpu_params_dict(self.weights["ref"])
 
+        if self.args.record_memory_history and (rollout_id == self.args.memory_snapshot_num_steps - 1):
+            profile_utils.dump_snapshot_and_stop(profile_utils.get_memory_snapshot_full_path(self.args))
+
         Timer().start("train_wait")
         return
 
@@ -559,7 +607,7 @@ class FSDPTrainRayActor(TrainRayActor):
             self.weight_updater.connect_rollout_engines(rollout_engines, rollout_engine_lock)
             dist.barrier(group=get_gloo_group())
 
-        with torch_memory_saver.disable() if self.args.offload and not torch.version.hip else nullcontext():
+        with torch_memory_saver.disable() if self.args.offload_train and not torch.version.hip else nullcontext():
             self.weight_updater.update_weights()
 
     @torch.no_grad()
@@ -634,6 +682,24 @@ class FSDPTrainRayActor(TrainRayActor):
             self.update_gpu_params_dict(current_weights)
 
 
+@torch.compile(dynamic=True)
+def selective_log_softmax(logits: torch.Tensor, input_ids: torch.Tensor) -> torch.Tensor:
+    """Fused version of the common `log_softmax -> gather` operation.
+
+    The fused version of this operation avoids the (potentially large) memory overhead
+    of allocating a new tensor to store the full logprobs.
+
+    Parameters:
+        logits: Tensor of shape [..., V] containing model logits.
+        input_ids: Tensor of shape [...] of token indices whose log-probabilities are gathered.
+
+    Returns:
+        Tensor of shape [...] containing the log-probabilities corresponding to `input_ids`.
+    """
+    logprobs = logits.log_softmax(dim=-1)
+    return torch.gather(logprobs, dim=-1, index=input_ids.unsqueeze(-1)).squeeze(-1)
+
+
 def gather_log_probs_packed(
     logits: torch.Tensor,
     input_ids: torch.Tensor,
@@ -661,14 +727,11 @@ def gather_log_probs_packed(
         logits = logits.div(temperature)
 
     # Shift for next-token prediction: logits[:-1] predicts input_ids[1:]
-    log_probs = torch.log_softmax(logits[:-1], dim=-1)
-    targets = input_ids[1:].to(device=log_probs.device)
+    shifted_logits = logits[:-1]
+    targets = input_ids[1:].to(device=shifted_logits.device)
 
     # Gather log probs for targets
-    gathered = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-
-    # Apply mask to exclude first tokens
-    return gathered
+    return selective_log_softmax(shifted_logits, targets)
 
 
 def sum_of_sample_mean(x: torch.Tensor, response_lengths: list[int], loss_masks: list[torch.Tensor]) -> torch.Tensor:
