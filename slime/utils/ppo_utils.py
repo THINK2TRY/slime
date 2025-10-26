@@ -53,7 +53,7 @@ def compute_cispo_policy_loss(
     eps_clip_high: float,
 ):
     ratio = (-ppo_kl).exp().detach()
-    clipped_ratio = ratio.clamp(eps_clip, eps_clip_high)
+    clipped_ratio = ratio.clamp(1 - eps_clip, 1 + eps_clip_high)
     pg_losses = -clipped_ratio * advantages * logp
     clipfrac = ratio.gt(clipped_ratio).float() + ratio.lt(clipped_ratio).float()
     clipfrac = (clipfrac > 0).float()

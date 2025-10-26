@@ -259,6 +259,9 @@ class MegatronTrainRayActor(TrainRayActor):
             return self.train_actor(rollout_id, rollout_data)
 
     def train_critic(self, rollout_id: int, rollout_data: RolloutBatch) -> None:
+        if self.args.use_routing_replay:
+            os.environ["ROUTING_REPLAY_STAGE"] = "fallthrough"
+            
         # Create data iterator for log_probs and train.
         data_iterator, num_microbatches = get_data_iterator(self.args, self.model, rollout_data)
         rollout_data.update(

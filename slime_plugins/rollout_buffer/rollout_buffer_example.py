@@ -163,6 +163,10 @@ async def get_rollout_data(api_base_url: str) -> tuple[List[Dict[str, Any]], Dic
                 data = data["data"]
         print(f"Meta info: {meta_info}")
         required_keys = {"uid", "instance_id", "messages", "reward", "extra_info"}
+        # required_keys = {"uid", "instance_id", "messages", "reward",}
+        for item in data:
+            if "extra_info" not in item:
+                item["extra_info"] = {}
         for item in data:
             if not required_keys.issubset(item.keys()):
                 raise ValueError(f"Missing required keys in response item: {item}")
@@ -180,7 +184,9 @@ def start_rollout(api_base_url: str, args, metadata):
         "remote_engine_url": f"http://{args.sglang_router_ip}:{args.sglang_router_port}",
         "remote_buffer_url": args.rollout_buffer_url,
         "task_type": args.rollout_task_type,
+        "rollou_task_type": args.rollout_task_type,
         "input_file": args.prompt_data,
+        "prompt_data": args.prompt_data,
         "num_repeat_per_sample": str(args.n_samples_per_prompt),
         "max_tokens": str(args.rollout_max_response_len),
         "sampling_params": {
@@ -196,6 +202,19 @@ def start_rollout(api_base_url: str, args, metadata):
         "search_summary_url": getattr(args, "search_summary_url", ""),
         "mask_offpolicy_data": getattr(args, "mask_extreme_offpolicy_data", False)
     }
+
+    for key, value in vars(args).items():
+        try:
+            # Test if the value is JSON segirializable
+            import json
+
+            json.dumps(value)
+            payload[key] = value
+        except (TypeError, ValueError):
+            # Skip non-serializable objects
+            print(f"[start_rollout] Skipping non-serializable field: {key} (type: {type(value).__name__})")
+            continue
+        
     print("start rollout with payload: ", payload)
 
     while True:
