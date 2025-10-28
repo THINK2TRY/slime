@@ -587,6 +587,20 @@ def value_loss_function(
     loss = sum_of_sample_mean(loss)
     values_clipfrac = sum_of_sample_mean(values_clipfrac.float())
 
+
+    return_value_gaps = (returns - values)
+    return_value_gaps_mean = sum_of_sample_mean(return_value_gaps)
+    return_value_gaps = (return_value_gaps - return_value_gaps_mean).pow(2)
+    _return_value_gaps_pow_mean = sum_of_sample_mean(return_value_gaps)
+
+    return_mean = sum_of_sample_mean(returns)
+    return_for_var = (returns - return_mean).pow(2)
+    _return_for_var_pow_mean = sum_of_sample_mean(return_for_var)
+
+    return_value_gaps = sum_of_sample_mean(return_value_gaps)
+    return_for_var = sum_of_sample_mean(return_for_var)
+    explained_variance = 1 - return_value_gaps / (return_for_var + 1e-6)
+    
     # make sure the gradient could backprop correctly.
     if values.numel() == 0:
         loss += 0 * values.sum()
@@ -594,6 +608,9 @@ def value_loss_function(
     reported_loss = {
         "value_loss": loss.clone().detach(),
         "value_clipfrac": values_clipfrac.clone().detach(),
+        "explained_variance": explained_variance.clone().detach(),
+        "return_value_gaps_mean": _return_value_gaps_pow_mean.clone().detach(),
+        "return_for_var_mean": _return_for_var_pow_mean.clone().detach(),
     }
 
     return loss, reported_loss

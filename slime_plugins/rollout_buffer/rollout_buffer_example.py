@@ -295,6 +295,11 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
         "turns": [],
         "overturn": [],
         "abort_times": [], 
+        "avg_negative_sample_lengths": [],
+        "avg_positive_sample_lengths": [],
+        "unnormal_end_by_server_or_format": [],
+        "normal_end": [],
+        "single_turn_end": [],
     }
     
     for i, group_record in enumerate(results):
@@ -329,12 +334,51 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
             log_items["overturn"].append(record.get("overturn", False))
             log_items["overlong"].append(record.get("overlong", False))
             log_items["abort_times"].append(record.get("abort_times", 0))
+
+            log_items["unnormal_end_by_server_or_format"].append(record.get("unnormal_end_by_server_or_format", False))
+            log_items["normal_end"].append(record.get("normal_end", False))
+            log_items["single_turn_end"].append(record.get("single_turn_end", False))
+
+            if record["raw_reward"] <= 0:
+                log_items["avg_negative_sample_lengths"].append(len(token_ids))
+            else:
+                log_items["avg_positive_sample_lengths"].append(len(token_ids))
             
+        
+        if args.truncate_negative_samples:
+            positive_items = [item for item in group_results if item.reward > 0]
+            negative_items = [item for item in group_results if item.reward <= 0]
+            if len(positive_items) > 0 and len(negative_items) > 0:
+                _group_results = []
+                max_pos_len = max([len(sample.tokens) for sample in positive_items])
+                max_pos_len_threshold = int(max_pos_len * 1.4)
+                for sample in negative_items:
+                    if len(sample.tokens) > max_pos_len_threshold:
+                        exceeded_len = len(sample.tokens) - max_pos_len_threshold
+                        tokens = sample.tokens[:-exceeded_len]
+                        loss_mask = sample.loss_mask[:-exceeded_len]
+                        new_sample = Sample(
+                            index=sample.index,
+                            prompt=sample.prompt,
+                            tokens=tokens,
+                            response_length=len(loss_mask),
+                            loss_mask=loss_mask,
+                            reward=sample.reward,
+                            status=sample.status,
+                            metadata=sample.metadata,
+                        )
+                        _group_results.append(new_sample)
+                    else:
+                        _group_results.append(sample)
+                _group_results.extend(positive_items)
+                group_results = _group_results
+        
         sample_results.append(group_results)
 
-    if args.use_wandb and log_items["overlong"]:
+    num_items = max([len(x) for x in log_items.values()])
+    if args.use_wandb and num_items > 0:
         import wandb
-        num_items = len(log_items["overturn"])
+        num_items = num_items if num_items > 0 else 1
         log_dict = {
             "rollout/overlong": sum(log_items["overlong"]) / num_items,
             "rollout/max_turns": max(log_items["turns"]),
@@ -342,7 +386,14 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
             "rollout/avg_turns": sum(log_items["turns"]) / num_items,
             "rollout/overturn": sum(log_items["overturn"]) / num_items,
             "rollout/abort_ratio": sum([x > 0 for x in log_items["abort_times"]]) / num_items,
-            "rollout/abort_ratio2": sum([x > 1 for x in log_items["abort_times"]]) / num_items
+            "rollout/abort_ratio2": sum([x > 1 for x in log_items["abort_times"]]) / num_items,
+
+            "rollout/avg_negative_sample_lengths": sum(log_items["avg_negative_sample_lengths"]) / max(1, len(log_items["avg_negative_sample_lengths"])),
+            "rollout/avg_positive_sample_lengths": sum(log_items["avg_positive_sample_lengths"]) / max(1, len(log_items["avg_positive_sample_lengths"])),
+            
+            "rollout/unnormal_end_by_server_or_format": sum(log_items["unnormal_end_by_server_or_format"]) / num_items,
+            "rollout/normal_end": sum(log_items["normal_end"]) / num_items,
+            "rollout/single_turn_end": sum(log_items["single_turn_end"]) / num_items
         }
         wandb.log(log_dict)
         

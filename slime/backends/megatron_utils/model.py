@@ -661,6 +661,9 @@ def initialize_model_and_optimizer(
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(args, role)
     setattr(model[0], "role", role)
     clear_memory()
+    from slime.utils.eval_config import EvalDatasetConfig
+    torch.serialization.add_safe_globals([EvalDatasetConfig])
+
     iteration, _ = load_checkpoint(
         model,
         optimizer,

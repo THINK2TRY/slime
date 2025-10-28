@@ -46,6 +46,9 @@ class Sample:
 
     def get_reward_value(self, args) -> float:
         return self.reward if not args.reward_key else self.reward[args.reward_key]
+    
+    def get_num_tokens(self) -> int:
+        return len(self.tokens)
 
 
 @dataclass

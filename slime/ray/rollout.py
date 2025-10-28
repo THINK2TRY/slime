@@ -174,18 +174,35 @@ class RolloutManager:
             and self.args.rewards_normalization
         ):
             # group norm
-            rewards = torch.tensor(raw_rewards, dtype=torch.float)
-            if rewards.shape[-1] == self.args.n_samples_per_prompt * self.args.rollout_batch_size:
-                rewards = rewards.reshape(-1, self.args.n_samples_per_prompt)
-            else:
-                # when samples count are not equal in each group
-                rewards = rewards.view(-1, rewards.shape[-1])
-            mean = rewards.mean(dim=-1, keepdim=True)
-            rewards = rewards - mean
+            if self.args.normalize_reward_in_token_level:
+                rewards = torch.tensor(raw_rewards, dtype=torch.float)
+                num_tokens = torch.tensor([sample.get_num_tokens() for sample in samples], dtype=torch.float)
 
-            if self.args.advantage_estimator in ["grpo", "gspo", "cispo"] and self.args.grpo_std_normalization:
-                std = rewards.std(dim=-1, keepdim=True)
-                rewards = rewards / (std + 1e-6)
+                if rewards.shape[-1] == self.args.n_samples_per_prompt * self.args.rollout_batch_size:
+                    rewards = rewards.reshape(-1, self.args.n_samples_per_prompt)
+                    num_tokens = num_tokens.reshape(-1, self.args.n_samples_per_prompt)
+                else:
+                    rewards = rewards.view(-1, rewards.shape[-1])
+                    num_tokens = num_tokens.view(-1, num_tokens.shape[-1])
+                    
+                rewards_token_sum = rewards * num_tokens
+                num_tokens_sum = num_tokens.sum(dim=-1)
+                mean = rewards_token_sum.sum(dim=-1) / num_tokens_sum
+
+                rewards = rewards - mean.unsqueeze(-1)
+            else:
+                rewards = torch.tensor(raw_rewards, dtype=torch.float)
+                if rewards.shape[-1] == self.args.n_samples_per_prompt * self.args.rollout_batch_size:
+                    rewards = rewards.reshape(-1, self.args.n_samples_per_prompt)
+                else:
+                    # when samples count are not equal in each group
+                    rewards = rewards.view(-1, rewards.shape[-1])
+                mean = rewards.mean(dim=-1, keepdim=True)
+                rewards = rewards - mean
+
+                if self.args.advantage_estimator in ["grpo", "gspo", "cispo"] and self.args.grpo_std_normalization:
+                    std = rewards.std(dim=-1, keepdim=True)
+                    rewards = rewards / (std + 1e-6)
 
             return raw_rewards, rewards.flatten().tolist()
 
