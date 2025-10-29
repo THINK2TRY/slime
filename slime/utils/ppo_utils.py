@@ -75,6 +75,12 @@ def compute_policy_loss(
         return compute_cispo_policy_loss(
             log_probs, advantages, ppo_kl, eps_clip, eps_clip_high
         )
+    elif advantage_estimator == "grpo_mask":
+        ratio = (-ppo_kl).exp()
+        ratio = ratio.clamp(eps_clip, eps_clip_high)
+        pg_losses = -ratio * advantages
+        clipfrac = torch.gt(ratio, eps_clip_high).float() + torch.lt(ratio, eps_clip).float()
+        clipfrac = (clipfrac > 0).float()
     else:
         ratio = (-ppo_kl).exp()
         pg_losses1 = -ratio * advantages

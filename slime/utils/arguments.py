@@ -666,7 +666,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--advantage-estimator",
                 type=str,
-                choices=["grpo", "gspo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "ppo", "cispo", "vapo"],
+                choices=["grpo", "gspo", "reinforce_plus_plus", "reinforce_plus_plus_baseline", "ppo", "cispo", "vapo", "grpo_mask"],
                 default="grpo",
             )
             parser.add_argument(
@@ -1017,7 +1017,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 help="Enable TITO rollout",
             )
             parser.add_argument(
-                "--use_rollout_log_probs", action="store_true", default=False, help="Whether to use log probs from rollout."
+                "--use-rollout-log-probs", action="store_true", default=False, help="Whether to use log probs from rollout."
             )
             # parser.add_argument('--post-self-attn-layernorm', action='store_true', help="If true, add a LayerNorm after self attention.")
             # parser.add_argument('--post-mlp-layernorm', action='store_true', help="If true, add a LayerNorm after MLP.")

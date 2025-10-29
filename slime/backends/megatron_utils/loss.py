@@ -236,7 +236,7 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch, 
             for i in range(len(log_probs))
         ]
 
-    if args.advantage_estimator in ["grpo", "gspo", "cispo"]:
+    if args.advantage_estimator in ["grpo", "gspo", "cispo", "grpo_mask"]:
         rewards = torch.tensor(rewards, dtype=torch.float32, device=kl[0].device)
         returns = get_grpo_returns(rewards, kl)
         # TODO: is the copy necessary?

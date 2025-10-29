@@ -328,6 +328,7 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
                     ),
                     loss_mask=loss_mask,
                     metadata={**record["extra_info"]},
+                    rollout_log_probs=record.get("rollout_log_probs", None),
                 )
             )
             log_items["turns"].append(len(oai_messages) // 2)
@@ -366,6 +367,7 @@ async def generate_rollout_async(args, rollout_id: int, data_buffer, evaluation:
                             reward=sample.reward,
                             status=sample.status,
                             metadata=sample.metadata,
+                            rollout_log_probs=sample.rollout_log_probs,
                         )
                         _group_results.append(new_sample)
                     else:
