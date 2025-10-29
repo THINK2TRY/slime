@@ -1010,6 +1010,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument("--mask-extreme-offpolicy-data", action="store_true", default=False)
             parser.add_argument("--normalize-reward-in-token-level", action="store_true", default=False)
             parser.add_argument("--truncate-negative-samples", action="store_true", default=False)
+            parser.add_argument(
+                "--enable-tito",
+                action="store_true",
+                default=False,
+                help="Enable TITO rollout",
+            )
+            parser.add_argument(
+                "--use_rollout_log_probs", action="store_true", default=False, help="Whether to use log probs from rollout."
+            )
             # parser.add_argument('--post-self-attn-layernorm', action='store_true', help="If true, add a LayerNorm after self attention.")
             # parser.add_argument('--post-mlp-layernorm', action='store_true', help="If true, add a LayerNorm after MLP.")
             # parser.add_argument('--load-optimizer-from-pretrained', action="store_true", help="If true, load optimizer state from pretrained checkpoint.")

@@ -319,8 +319,12 @@ class MegatronTrainRayActor(TrainRayActor):
                     )
                 )
 
+                if self.args.use_rollout_log_probs:
+                    if "rollout_log_probs" in rollout_data and rollout_data["rollout_log_probs"] is not None:
+                        rollout_data["log_probs"] = rollout_data["rollout_log_probs"]
+                        
                 if self.args.use_critic:
-                    sync_actor_critic_data(
+                    sync_actor_critic_data(q
                         self.args,
                         rollout_data,
                         self._actor_critic_groups,
